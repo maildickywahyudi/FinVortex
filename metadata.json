@@ -1,0 +1,8 @@
+{
+  "name": "LMS - Loan Management System",
+  "description": "A comprehensive Loan Management System (LMS) for loan applications, approval workflows, and borrower dashboards.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

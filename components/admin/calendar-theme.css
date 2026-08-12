@@ -1,0 +1,94 @@
+.rdp-day-due {
+  position: relative;
+  font-weight: 600;
+}
+.rdp-day-due::after {
+  content: '';
+  position: absolute;
+  bottom: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #E11D48;
+}
+.rdp-caption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 0.5rem;
+  margin-bottom: 0.75rem;
+}
+.rdp-caption-label {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #1e293b;
+}
+.dark .rdp-caption-label {
+  color: #f8fafc;
+}
+.rdp-head_cell {
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: #94a3b8;
+  text-transform: uppercase;
+}
+.dark .rdp-head_cell {
+  color: #64748b;
+}
+.rdp-cell {
+  padding: 1px;
+}
+.rdp-day {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  color: #334155;
+  transition: all 0.15s;
+}
+.dark .rdp-day {
+  color: #cbd5e1;
+}
+.rdp-day:hover:not(.rdp-day_disabled) {
+  background: #eff6ff;
+  color: #1e3a8a;
+}
+.dark .rdp-day:hover:not(.rdp-day_disabled) {
+  background: #1e293b;
+  color: #93c5fd;
+}
+.rdp-day_today {
+  font-weight: 700;
+  border: 1px solid #3b82f6;
+}
+.rdp-nav-button {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: #64748b;
+  transition: all 0.15s;
+}
+.dark .rdp-nav-button {
+  color: #94a3b8;
+}
+.rdp-nav-button:hover {
+  background: #f1f5f9;
+  color: #1e293b;
+}
+.dark .rdp-nav-button:hover {
+  background: #334155;
+  color: #f8fafc;
+}
+.rdp-month {
+  margin: 0;
+}
+.rdp-weekday {
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: #94a3b8;
+}
