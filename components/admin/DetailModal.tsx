@@ -13,10 +13,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import {
   CheckCircle,
+  CheckCircle2,
   XCircle,
   BadgeCheck,
   MessageCircle,
@@ -40,9 +42,10 @@ import {
   Download,
   Bell,
 } from 'lucide-react';
-import type { Nasabah, StatusPengajuan } from '@/types';
+import type { Nasabah, StatusPengajuan, RepaymentItem } from '@/types';
 import { formatRupiah, formatDate, cn } from '@/lib/utils';
-import { updateStatus, calculateNasabahProfit, restoreAutoReject } from '@/lib/api';
+import { updateStatus, calculateNasabahProfit, restoreAutoReject, verifyRepayment, updateNasabahAdminCustomDetails } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 import { PrintableDocumentModal } from './PrintableDocumentModal';
 import { WaNotificationModal, type TemplateType } from './WaNotificationModal';
 import { StatusTimeline } from './StatusTimeline';
@@ -63,12 +66,18 @@ const statusConfig: Record<StatusPengajuan, { variant: 'default' | 'secondary' |
 };
 
 export function DetailModal({ nasabah, open, onClose, onStatusChange }: DetailModalProps) {
+  const { user: currentUser } = useAuth();
   const [alasan, setAlasan] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [showWaModal, setShowWaModal] = useState(false);
   const [waTemplate, setWaTemplate] = useState<TemplateType | undefined>(undefined);
   const [printDocType, setPrintDocType] = useState<'SPK' | 'KWITANSI_DISBURSE' | 'KWITANSI_LUNAS'>('SPK');
+
+  // Repayment verification state
+  const [dendaMap, setDendaMap] = useState<Record<string, string>>({});
+  const [adminNoteMap, setAdminNoteMap] = useState<Record<string, string>>({});
+  const [verifyingId, setVerifyingId] = useState<string | null>(null);
 
   // Internal Notes State
   const [internalNoteInput, setInternalNoteInput] = useState('');
@@ -82,7 +91,65 @@ export function DetailModal({ nasabah, open, onClose, onStatusChange }: DetailMo
     }
   });
 
+  // Admin Installment & Reschedule State
+  const [adminModeCicilan, setAdminModeCicilan] = useState<'PENUH' | 'BUNGA_SAJA' | 'CICILAN_KHUSUS'>(nasabah.modeCicilan || 'PENUH');
+  const [adminDueDate, setAdminDueDate] = useState<string>(nasabah.tanggalJatuhTempo ? nasabah.tanggalJatuhTempo.split('T')[0] : '');
+  const [adminSisaPinjaman, setAdminSisaPinjaman] = useState<string>(nasabah.sisaPinjaman !== undefined ? String(nasabah.sisaPinjaman) : '');
+  const [adminKetCicilan, setAdminKetCicilan] = useState<string>(nasabah.keteranganModeCicilan || '');
+  const [adminDriveUrl, setAdminDriveUrl] = useState<string>(nasabah.driveFolderUrl || '');
+  const [savingCustomDetails, setSavingCustomDetails] = useState(false);
+
+  const handleSaveAdminCustomDetails = async () => {
+    setSavingCustomDetails(true);
+    try {
+      const parseSisa = adminSisaPinjaman ? parseInt(adminSisaPinjaman.replace(/[^0-9]/g, ''), 10) : undefined;
+      const updated = await updateNasabahAdminCustomDetails(
+        nasabah.id,
+        {
+          modeCicilan: adminModeCicilan,
+          tanggalJatuhTempo: adminDueDate ? new Date(adminDueDate).toISOString() : undefined,
+          sisaPinjaman: parseSisa,
+          keteranganModeCicilan: adminKetCicilan,
+          driveFolderUrl: adminDriveUrl,
+        },
+        currentUser ? { email: currentUser.email, nama: currentUser.nama } : undefined
+      );
+      if (updated) {
+        onStatusChange(updated);
+        toast.success('Pengaturan cicilan, tanggal jatuh tempo & Drive berhasil disimpan!');
+      }
+    } catch (err) {
+      toast.error('Gagal menyimpan detail cicilan.');
+    } finally {
+      setSavingCustomDetails(false);
+    }
+  };
+
   if (!nasabah) return null;
+
+  const handleVerifyRepayment = async (repaymentId: string, status: 'VERIFIED' | 'REJECTED') => {
+    setVerifyingId(repaymentId);
+    try {
+      const dendaVal = parseInt((dendaMap[repaymentId] || '').replace(/[^0-9]/g, ''), 10) || 0;
+      const noteVal = adminNoteMap[repaymentId] || '';
+      const updated = await verifyRepayment(
+        nasabah.id,
+        repaymentId,
+        status,
+        noteVal,
+        dendaVal,
+        currentUser ? { email: currentUser.email, nama: currentUser.nama } : undefined
+      );
+      if (updated) {
+        onStatusChange(updated);
+        toast.success(`Pembayaran ${repaymentId} berhasil di-verifikasi [${status}]!`);
+      }
+    } catch (err) {
+      toast.error('Gagal memverifikasi pembayaran.');
+    } finally {
+      setVerifyingId(null);
+    }
+  };
 
   const handleAddNote = () => {
     if (!internalNoteInput.trim()) return;
@@ -185,11 +252,20 @@ export function DetailModal({ nasabah, open, onClose, onStatusChange }: DetailMo
         </DialogHeader>
 
         <Tabs defaultValue="data" className="mt-4">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-5 text-[11px] sm:text-xs">
             <TabsTrigger value="data">Data Nasabah</TabsTrigger>
             <TabsTrigger value="dokumen">Dokumen</TabsTrigger>
-            <TabsTrigger value="timeline">Timeline Status</TabsTrigger>
-            <TabsTrigger value="catatan">Catatan Admin</TabsTrigger>
+            <TabsTrigger value="timeline">Timeline</TabsTrigger>
+            <TabsTrigger value="catatan">Catatan</TabsTrigger>
+            <TabsTrigger value="angsuran" className="relative">
+              Angsuran
+              {nasabah.repaymentHistory && nasabah.repaymentHistory.some((r) => r.status === 'PENDING_VERIFICATION') && (
+                <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500"></span>
+                </span>
+              )}
+            </TabsTrigger>
           </TabsList>
 
           {/* Quick Action Toolbar */}
@@ -562,6 +638,268 @@ export function DetailModal({ nasabah, open, onClose, onStatusChange }: DetailMo
                   {notesList.map((note, idx) => (
                     <div key={idx} className="p-3 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 shadow-2xs">
                       {note}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </TabsContent>
+
+          {/* Tab 5: Angsuran & Verification */}
+          <TabsContent value="angsuran" className="space-y-4 pt-3">
+            {/* Financial Overview */}
+            {(() => {
+              const profit = calculateNasabahProfit(nasabah);
+              const parseAmt = (val: any) => (typeof val === 'number' ? val : parseInt(String(val || 0).replace(/[^0-9]/g, ''), 10) || 0);
+              const pokok = parseAmt(nasabah.jumlahPinjaman);
+              const totalWajib = pokok + profit;
+              const verifiedPaid = (nasabah.repaymentHistory || [])
+                .filter((r) => r.status === 'VERIFIED')
+                .reduce((s, r) => s + r.jumlahBayar, 0);
+              const sisa = nasabah.sisaPinjaman !== undefined ? nasabah.sisaPinjaman : Math.max(0, totalWajib - verifiedPaid);
+
+              return (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                    <span className="text-slate-400 block text-[11px]">Pokok Pinjaman</span>
+                    <span className="font-bold text-slate-800 dark:text-slate-100 text-sm">{formatRupiah(pokok)}</span>
+                  </div>
+                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                    <span className="text-slate-400 block text-[11px]">Keuntungan / Bunga</span>
+                    <span className="font-bold text-slate-800 dark:text-slate-100 text-sm">{formatRupiah(profit)}</span>
+                  </div>
+                  <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800">
+                    <span className="text-emerald-700 dark:text-emerald-400 block text-[11px]">Terbayar (Verified)</span>
+                    <span className="font-bold text-emerald-800 dark:text-emerald-300 text-sm">{formatRupiah(verifiedPaid)}</span>
+                  </div>
+                  <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800">
+                    <span className="text-amber-800 dark:text-amber-400 block text-[11px]">Sisa Pinjaman</span>
+                    <span className="font-bold text-amber-900 dark:text-amber-300 text-sm">{formatRupiah(sisa)}</span>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Admin Controls: Mode Pembayaran, Cicilan & Reschedule Tanggal Jatuh Tempo */}
+            <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 dark:bg-indigo-950/40 p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-indigo-900 dark:text-indigo-200">
+                  <Coins className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+                  Pengaturan Mode Cicilan & Tanggal Jatuh Tempo (Khusus Admin)
+                </div>
+                <Badge className="bg-indigo-600 text-white text-[10px]">Kontrol Admin</Badge>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2 text-xs">
+                <div className="space-y-1">
+                  <Label className="text-[11px] text-slate-700 font-semibold">Mode Pembayaran Nasabah</Label>
+                  <select
+                    value={adminModeCicilan}
+                    onChange={(e) => setAdminModeCicilan(e.target.value as any)}
+                    className="w-full h-9 rounded-lg border border-slate-300 bg-white dark:bg-slate-800 px-3 text-xs font-semibold"
+                  >
+                    <option value="PENUH">Bayar Penuh (Pokok + Bunga Normal)</option>
+                    <option value="BUNGA_SAJA">Bayar Bunga Saja (Perpanjangan Tenor / Rollover)</option>
+                    <option value="CICILAN_KHUSUS">Skema Cicilan Khusus / Bertahap</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-[11px] text-slate-700 font-semibold">Ubah Tanggal Jatuh Tempo</Label>
+                  <Input
+                    type="date"
+                    value={adminDueDate}
+                    onChange={(e) => setAdminDueDate(e.target.value)}
+                    className="h-9 text-xs bg-white dark:bg-slate-800"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-[11px] text-slate-700 font-semibold">Override Sisa Pinjaman / Tagihan (Rp)</Label>
+                  <Input
+                    type="text"
+                    value={adminSisaPinjaman ? formatRupiah(parseInt(adminSisaPinjaman.replace(/[^0-9]/g, ''), 10) || 0) : ''}
+                    onChange={(e) => setAdminSisaPinjaman(e.target.value.replace(/[^0-9]/g, ''))}
+                    placeholder="Kosongkan jika sesuai kalkulasi otomatis"
+                    className="h-9 text-xs bg-white dark:bg-slate-800 font-mono"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-[11px] text-slate-700 font-semibold">Folder Google Drive Per Nasabah</Label>
+                  <Input
+                    type="text"
+                    value={adminDriveUrl}
+                    onChange={(e) => setAdminDriveUrl(e.target.value)}
+                    placeholder="Contoh: https://drive.google.com/drive/folders/..."
+                    className="h-9 text-xs bg-white dark:bg-slate-800 font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-1">
+                <div className="text-[11px] text-slate-500">
+                  {adminDriveUrl ? (
+                    <a href={adminDriveUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 font-medium hover:underline flex items-center gap-1">
+                      <FileImage className="h-3.5 w-3.5" /> Buka Folder Google Drive Nasabah
+                    </a>
+                  ) : (
+                    <span>Format Folder: Drive / LMS Nasabah / [{nasabah.nik || nasabah.id}] - {nasabah.nama}</span>
+                  )}
+                </div>
+
+                <Button
+                  onClick={handleSaveAdminCustomDetails}
+                  disabled={savingCustomDetails}
+                  size="sm"
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs h-8 px-4 rounded-lg gap-1.5"
+                >
+                  {savingCustomDetails ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                  Simpan Mode Cicilan
+                </Button>
+              </div>
+            </div>
+
+            {/* Repayment List and Action */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                  Daftar Setoran Angsuran ({nasabah.repaymentHistory?.length || 0})
+                </h4>
+                {nasabah.status === 'Approved' && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleLunas}
+                    className="text-xs font-bold bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 h-7"
+                  >
+                    Tandai Langsung Lunas
+                  </Button>
+                )}
+              </div>
+
+              {!nasabah.repaymentHistory || nasabah.repaymentHistory.length === 0 ? (
+                <div className="p-8 text-center border border-dashed rounded-xl bg-slate-50 dark:bg-slate-800/50 text-slate-400 text-xs">
+                  Nasabah belum mengunggah bukti pembayaran angsuran.
+                </div>
+              ) : (
+                <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
+                  {nasabah.repaymentHistory.map((repayment: RepaymentItem) => (
+                    <div
+                      key={repayment.id}
+                      className={cn(
+                        'p-3.5 rounded-xl border text-xs space-y-3 transition-colors',
+                        repayment.status === 'PENDING_VERIFICATION' && 'bg-amber-50/40 border-amber-200 dark:bg-amber-950/20 dark:border-amber-800',
+                        repayment.status === 'VERIFIED' && 'bg-emerald-50/40 border-emerald-200 dark:bg-emerald-950/20 dark:border-emerald-800',
+                        repayment.status === 'REJECTED' && 'bg-rose-50/40 border-rose-200 dark:bg-rose-950/20 dark:border-rose-800',
+                      )}
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b pb-2.5">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-sm text-slate-800 dark:text-slate-100">
+                              {formatRupiah(repayment.jumlahBayar)}
+                            </span>
+                            <Badge
+                              className={cn(
+                                'text-[10px] font-bold uppercase px-2 py-0.5 border',
+                                repayment.status === 'VERIFIED' && 'bg-emerald-100 text-emerald-800 border-emerald-300',
+                                repayment.status === 'PENDING_VERIFICATION' && 'bg-amber-100 text-amber-800 border-amber-300',
+                                repayment.status === 'REJECTED' && 'bg-rose-100 text-rose-800 border-rose-300',
+                              )}
+                            >
+                              {repayment.status === 'PENDING_VERIFICATION' ? 'Menunggu Konfirmasi' : repayment.status === 'VERIFIED' ? 'Disetujui' : 'Ditolak'}
+                            </Badge>
+                          </div>
+                          <p className="text-[11px] text-slate-500 mt-0.5">
+                            ID: <code className="font-mono">{repayment.id}</code> • Tanggal Bayar: {repayment.tanggalBayar || repayment.submittedAt?.split('T')[0]}
+                          </p>
+                        </div>
+
+                        {repayment.buktiUrl && (
+                          <a
+                            href={repayment.buktiUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 text-[11px] text-blue-600 dark:text-blue-400 font-semibold hover:underline"
+                          >
+                            <FileImage className="h-4 w-4" /> Lihat Bukti Struk
+                          </a>
+                        )}
+                      </div>
+
+                      {/* Admin Inputs for Pending Verification */}
+                      {repayment.status === 'PENDING_VERIFICATION' ? (
+                        <div className="space-y-2.5 bg-white dark:bg-slate-900 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
+                          <p className="text-[11px] font-bold text-slate-700 dark:text-slate-200 uppercase tracking-wide">
+                            Verifikasi Setoran Ini:
+                          </p>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <div>
+                              <Label className="text-[11px] text-slate-500">Denda Keterlambatan (Opsional)</Label>
+                              <Input
+                                type="text"
+                                placeholder="Rp 0"
+                                value={dendaMap[repayment.id] || ''}
+                                onChange={(e) => {
+                                  const val = e.target.value.replace(/[^0-9]/g, '');
+                                  setDendaMap({
+                                    ...dendaMap,
+                                    [repayment.id]: val ? formatRupiah(parseInt(val, 10)) : '',
+                                  });
+                                }}
+                                className="h-8 text-xs font-mono mt-0.5"
+                              />
+                            </div>
+
+                            <div>
+                              <Label className="text-[11px] text-slate-500">Catatan Admin</Label>
+                              <Input
+                                type="text"
+                                placeholder="Contoh: Transfer valid via BCA"
+                                value={adminNoteMap[repayment.id] || ''}
+                                onChange={(e) =>
+                                  setAdminNoteMap({
+                                    ...adminNoteMap,
+                                    [repayment.id]: e.target.value,
+                                  })
+                                }
+                                className="h-8 text-xs mt-0.5"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 pt-1">
+                            <Button
+                              type="button"
+                              disabled={verifyingId === repayment.id}
+                              onClick={() => handleVerifyRepayment(repayment.id, 'VERIFIED')}
+                              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-8 px-4 rounded-lg shadow-2xs gap-1"
+                            >
+                              {verifyingId === repayment.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                              Setujui Setoran
+                            </Button>
+
+                            <Button
+                              type="button"
+                              disabled={verifyingId === repayment.id}
+                              onClick={() => handleVerifyRepayment(repayment.id, 'REJECTED')}
+                              variant="outline"
+                              className="border-rose-300 text-rose-700 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-300 font-bold text-xs h-8 px-4 rounded-lg gap-1"
+                            >
+                              <XCircle className="h-3.5 w-3.5" /> Tolak
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-[11px] text-slate-500 space-y-0.5">
+                          {repayment.adminNote && <p><strong>Catatan Admin:</strong> {repayment.adminNote}</p>}
+                          {repayment.denda ? <p className="text-rose-600 font-semibold"><strong>Denda Ditambahkan:</strong> {formatRupiah(repayment.denda)}</p> : null}
+                          {repayment.verifiedBy && <p className="italic text-slate-400">Diverifikasi oleh: {repayment.verifiedBy}</p>}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

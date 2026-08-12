@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Database, AlertTriangle, CheckCircle, RefreshCw, ArrowRight, ExternalLink } from 'lucide-react';
+import { Database, AlertTriangle, CheckCircle, RefreshCw, ArrowRight, ExternalLink, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { getEffectiveAppsScriptUrl, testConnection } from '@/lib/api';
 import Link from 'next/link';
@@ -11,6 +11,19 @@ export function SpreadsheetConnectionBanner() {
   const [status, setStatus] = useState<'testing' | 'connected' | 'disconnected' | 'not_configured'>('testing');
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [checking, setChecking] = useState(false);
+  const [dismissed, setDismissed] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('lms_hide_spreadsheet_banner') === 'true';
+    }
+    return false;
+  });
+
+  const handleDismiss = () => {
+    setDismissed(true);
+    try {
+      localStorage.setItem('lms_hide_spreadsheet_banner', 'true');
+    } catch (e) {}
+  };
 
   const checkHealth = async () => {
     setChecking(true);
@@ -46,6 +59,8 @@ export function SpreadsheetConnectionBanner() {
     window.addEventListener('lms_config_updated', handleConfigChange);
     return () => window.removeEventListener('lms_config_updated', handleConfigChange);
   }, []);
+
+  if (dismissed) return null;
 
   if (status === 'connected') {
     return (
@@ -92,7 +107,7 @@ export function SpreadsheetConnectionBanner() {
               </span>
             </p>
             <p className="text-[11px] text-rose-800 dark:text-rose-300 mt-0.5 leading-relaxed">
-              Koneksi ke Web App URL mengalami kendala ({errorMessage}). Data pengajuan saat ini dialihkan ke penyimpanan sementara browser (Offline Storage).
+              Koneksi ke Google Apps Script Web App mengalami kendala ({errorMessage}). Pastikan URL Apps Script sudah benar, telah di-deploy ulang sebagai versi terbaru, dan hak akses diatur ke &quot;Anyone&quot;.
             </p>
           </div>
         </div>
@@ -132,10 +147,10 @@ export function SpreadsheetConnectionBanner() {
         </div>
         <div>
           <p className="font-bold text-amber-950 dark:text-amber-100">
-            Mode Penyimpanan Lokal (Offline Storage)
+            Belum Terhubung ke Google Spreadsheet
           </p>
           <p className="text-[11px] text-amber-800 dark:text-amber-300 mt-0.5 leading-relaxed">
-            Aplikasi belum terhubung dengan Google Spreadsheet terpusat. Untuk menyimpan data secara otomatis di Google Drive/Sheets Anda, hubungkan Web App URL di Pengaturan.
+            Aplikasi belum terhubung dengan Google Spreadsheet terpusat. Masukkan Web App URL Google Apps Script Anda di menu Pengaturan.
           </p>
         </div>
       </div>

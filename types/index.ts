@@ -1,10 +1,12 @@
 export type StatusPengajuan = 'Pending' | 'Approved' | 'Rejected' | 'Lunas';
 
+export type AdminRole = 'Super Admin' | 'Staff Analyst' | 'Admin';
+
 export interface AdminUser {
   email: string;
   password: string;
   nama: string;
-  role: 'Admin' | 'Super Admin';
+  role: AdminRole;
 }
 
 export interface ConfigItem {
@@ -29,6 +31,21 @@ export interface StatusHistoryItem {
   note?: string;
 }
 
+export interface RepaymentItem {
+  id: string;
+  nasabahId: string;
+  tanggalBayar: string;
+  jumlahBayar: number;
+  buktiUrl: string;
+  status: 'PENDING_VERIFICATION' | 'VERIFIED' | 'REJECTED';
+  denda?: number;
+  sisaPokokAfter?: number;
+  adminNote?: string;
+  submittedAt: string;
+  verifiedAt?: string;
+  verifiedBy?: string;
+}
+
 export interface AdminActivityLog {
   id: string;
   timestamp: string;
@@ -40,7 +57,9 @@ export interface AdminActivityLog {
     | 'ADMIN_USER_CHANGE'
     | 'NASABAH_DELETE'
     | 'RESTORE_AUTO_REJECT'
-    | 'EXPORT_DATA';
+    | 'EXPORT_DATA'
+    | 'REPAYMENT_VERIFIED'
+    | 'REPAYMENT_SUBMITTED';
   description: string;
   targetId?: string;
   details?: string;
@@ -53,6 +72,8 @@ export interface Nasabah {
   tanggalLahir: string;
   whatsapp: string;
   lokasi: string;
+  alamatLengkap?: string;
+  shareLokasi?: string;
   jumlahPinjaman: number;
   tenor: number;
   bunga: number;
@@ -76,6 +97,11 @@ export interface Nasabah {
   namaPemilikRekening?: string;
   adminNote?: string;
   statusHistory?: StatusHistoryItem[];
+  sisaPinjaman?: number;
+  repaymentHistory?: RepaymentItem[];
+  modeCicilan?: 'PENUH' | 'BUNGA_SAJA' | 'CICILAN_KHUSUS';
+  keteranganModeCicilan?: string;
+  driveFolderUrl?: string;
 }
 
 export interface DashboardStats {

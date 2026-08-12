@@ -43,6 +43,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Card } from '@/components/ui/card';
+import { Switch } from '@/components/ui/switch';
 import { DetailModal } from './DetailModal';
 import { WaNotificationModal, type TemplateType } from './WaNotificationModal';
 import { getNasabah, updateStatus, deleteNasabah, restoreAutoReject } from '@/lib/api';
@@ -85,6 +86,37 @@ export function DashboardTable() {
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Nasabah | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const [secondsLeft, setSecondsLeft] = useState(60);
+
+  // Auto-refresh timer every 60 seconds
+  useEffect(() => {
+    if (!autoRefresh) {
+      setSecondsLeft(60);
+      return;
+    }
+
+    const timer = setInterval(() => {
+      setSecondsLeft((prev) => prev - 1);
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [autoRefresh]);
+
+  useEffect(() => {
+    if (!autoRefresh) return;
+
+    if (secondsLeft <= 0) {
+      setSecondsLeft(60);
+      getNasabah()
+        .then((result) => {
+          setData(result);
+        })
+        .catch((err) => {
+          console.error('Auto-refresh error:', err);
+        });
+    }
+  }, [secondsLeft, autoRefresh]);
 
   const loadData = async () => {
     setLoading(true);
@@ -277,98 +309,138 @@ export function DashboardTable() {
   return (
     <Card className="rounded-2xl border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 soft-shadow overflow-hidden">
       {/* Toolbar */}
-      <div className="flex flex-col gap-3 border-b border-slate-200/80 dark:border-slate-800 p-4 lg:flex-row lg:items-center lg:justify-between bg-white dark:bg-slate-900">
-        <div className="flex flex-1 flex-col gap-3 sm:flex-row sm:items-center">
-          <div className="relative flex-1 sm:max-w-xs flex items-center">
-            <Search className="absolute left-3 h-4 w-4 text-slate-400 dark:text-slate-500 pointer-events-none" />
-            <Input
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value);
-                setPage(1);
-              }}
-              placeholder="Cari nama, ID, WhatsApp..."
-              className="pl-9 h-9 text-xs bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus-visible:ring-blue-500"
-            />
-          </div>
-          <Select
-            value={statusFilter}
-            onValueChange={(v) => {
-              setStatusFilter(v);
-              setPage(1);
-            }}
-          >
-            <SelectTrigger className="w-full sm:w-44 h-9 text-xs bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 font-medium">
-              <SelectValue placeholder="Filter Status" />
-            </SelectTrigger>
-            <SelectContent className="dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100">
-              <SelectItem value="all">Semua Status</SelectItem>
-              <SelectItem value="Pending">Pending</SelectItem>
-              <SelectItem value="Approved">Approved</SelectItem>
-              <SelectItem value="Lunas">Lunas</SelectItem>
-              <SelectItem value="Rejected">Rejected</SelectItem>
-              <SelectItem value="AutoReject" className="text-rose-600 dark:text-rose-400 font-semibold">
-                🛡️ Auto Reject ({autoRejectCount})
-              </SelectItem>
-            </SelectContent>
-          </Select>
-
-          {/* Date Range Filters */}
-          <div className="flex flex-wrap items-center gap-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg p-1 h-9">
-            <div className="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400 font-medium px-1">
-              <Calendar className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
-              <span>Rentang:</span>
-            </div>
-            <Input
-              type="date"
-              value={startDate}
-              onChange={(e) => {
-                setStartDate(e.target.value);
-                setPage(1);
-              }}
-              className="h-7 text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 w-32 border-slate-200 dark:border-slate-700 px-1.5"
-              title="Tanggal Awal Pengajuan"
-            />
-            <span className="text-xs text-slate-400">-</span>
-            <Input
-              type="date"
-              value={endDate}
-              onChange={(e) => {
-                setEndDate(e.target.value);
-                setPage(1);
-              }}
-              className="h-7 text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 w-32 border-slate-200 dark:border-slate-700 px-1.5"
-              title="Tanggal Akhir Pengajuan"
-            />
-            {(startDate || endDate) && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-800 shrink-0"
-                onClick={() => {
-                  setStartDate('');
-                  setEndDate('');
+      <div className="flex flex-col gap-3.5 border-b border-slate-200/80 dark:border-slate-800 p-3.5 sm:p-4 bg-white dark:bg-slate-900">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:flex-wrap lg:flex-nowrap flex-1">
+            <div className="relative w-full sm:w-64 flex items-center shrink-0">
+              <Search className="absolute left-3 h-4 w-4 text-slate-400 dark:text-slate-500 pointer-events-none" />
+              <Input
+                value={search}
+                onChange={(e) => {
+                  setSearch(e.target.value);
                   setPage(1);
                 }}
-                title="Reset Filter Tanggal"
+                placeholder="Cari nama, ID, WhatsApp..."
+                className="pl-9 h-9 text-xs bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus-visible:ring-blue-500 w-full"
+              />
+            </div>
+
+            <div className="w-full sm:w-44 shrink-0">
+              <Select
+                value={statusFilter}
+                onValueChange={(v) => {
+                  setStatusFilter(v);
+                  setPage(1);
+                }}
               >
-                <X className="h-3.5 w-3.5" />
-              </Button>
-            )}
+                <SelectTrigger className="w-full h-9 text-xs bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 font-medium">
+                  <SelectValue placeholder="Filter Status" />
+                </SelectTrigger>
+                <SelectContent className="dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100">
+                  <SelectItem value="all">Semua Status</SelectItem>
+                  <SelectItem value="Pending">Pending</SelectItem>
+                  <SelectItem value="Approved">Approved</SelectItem>
+                  <SelectItem value="Lunas">Lunas</SelectItem>
+                  <SelectItem value="Rejected">Rejected</SelectItem>
+                  <SelectItem value="AutoReject" className="text-rose-600 dark:text-rose-400 font-semibold">
+                    🛡️ Auto Reject ({autoRejectCount})
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Date Range Filters */}
+            <div className="flex flex-wrap items-center gap-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg p-1.5 min-h-[36px] w-full sm:w-auto">
+              <div className="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400 font-medium px-1 shrink-0">
+                <Calendar className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
+                <span>Rentang:</span>
+              </div>
+              <div className="flex items-center gap-1 flex-1 sm:flex-initial">
+                <Input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => {
+                    setStartDate(e.target.value);
+                    setPage(1);
+                  }}
+                  className="h-7 text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 w-full sm:w-28 border-slate-200 dark:border-slate-700 px-1"
+                  title="Tanggal Awal Pengajuan"
+                />
+                <span className="text-xs text-slate-400 px-0.5">-</span>
+                <Input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => {
+                    setEndDate(e.target.value);
+                    setPage(1);
+                  }}
+                  className="h-7 text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 w-full sm:w-28 border-slate-200 dark:border-slate-700 px-1"
+                  title="Tanggal Akhir Pengajuan"
+                />
+              </div>
+              {(startDate || endDate) && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-800 shrink-0 ml-auto sm:ml-0"
+                  onClick={() => {
+                    setStartDate('');
+                    setEndDate('');
+                    setPage(1);
+                  }}
+                  title="Reset Filter Tanggal"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              )}
+            </div>
           </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing} className="h-9 text-xs border-slate-200 dark:border-slate-800 dark:hover:bg-slate-800">
-            {refreshing ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />}
-            Refresh
-          </Button>
-          <Button variant="outline" size="sm" onClick={handleExportExcel} className="h-9 text-xs border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 dark:hover:bg-emerald-900 font-medium">
-            <Download className="mr-1.5 h-3.5 w-3.5 text-emerald-700 dark:text-emerald-400" /> Export Excel
-          </Button>
-          <Button variant="outline" size="sm" onClick={handleExportPDF} className="h-9 text-xs border-rose-200 bg-rose-50 text-rose-800 hover:bg-rose-100 dark:border-rose-800 dark:bg-rose-950/60 dark:text-rose-300 dark:hover:bg-rose-900 font-medium">
-            <FileText className="mr-1.5 h-3.5 w-3.5 text-rose-700 dark:text-rose-400" /> Export PDF (Final)
-          </Button>
+
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto shrink-0 pt-1 lg:pt-0">
+            {/* Auto-refresh Toggle */}
+            <div className="flex items-center gap-2 px-2.5 py-1 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg h-9 shadow-2xs">
+              <Switch
+                id="auto-refresh-toggle"
+                checked={autoRefresh}
+                onCheckedChange={(checked) => {
+                  setAutoRefresh(checked);
+                  if (checked) {
+                    toast.info('Auto-refresh diaktifkan (memuat data Google Spreadsheet setiap 60 detik)');
+                  } else {
+                    toast.info('Auto-refresh dinonaktifkan');
+                  }
+                }}
+              />
+              <label
+                htmlFor="auto-refresh-toggle"
+                className="text-xs font-semibold text-slate-700 dark:text-slate-300 cursor-pointer flex items-center gap-1.5 select-none"
+              >
+                <span>Auto-refresh</span>
+                {autoRefresh ? (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/80 px-1.5 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    {secondsLeft}s
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-slate-400 font-normal">(60s)</span>
+                )}
+              </label>
+            </div>
+
+            <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing} className="h-9 text-[11px] sm:text-xs border-slate-200 dark:border-slate-800 dark:hover:bg-slate-800 px-2 sm:px-3 justify-center">
+              {refreshing ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1 h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />}
+              <span>Refresh</span>
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleExportExcel} className="h-9 text-[11px] sm:text-xs border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 dark:hover:bg-emerald-900 font-medium px-2 sm:px-3 justify-center">
+              <Download className="mr-1 h-3.5 w-3.5 text-emerald-700 dark:text-emerald-400" />
+              <span>Excel</span>
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleExportPDF} className="h-9 text-[11px] sm:text-xs border-rose-200 bg-rose-50 text-rose-800 hover:bg-rose-100 dark:border-rose-800 dark:bg-rose-950/60 dark:text-rose-300 dark:hover:bg-rose-900 font-medium px-2 sm:px-3 justify-center">
+              <FileText className="mr-1 h-3.5 w-3.5 text-rose-700 dark:text-rose-400" />
+              <span>PDF</span>
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -436,8 +508,33 @@ export function DashboardTable() {
                       {n.id}
                     </button>
                     <p className="mt-0.5 text-sm font-semibold text-slate-900 dark:text-slate-100">{n.nama}</p>
+                    
+                    {/* Mobile inline details visible on mobile/tablet */}
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400 lg:hidden">
+                      <span className="font-bold text-blue-700 dark:text-blue-400">{formatRupiah(n.jumlahPinjaman)}</span>
+                      <span>•</span>
+                      <span>{n.tenor} Hari</span>
+                      {n.whatsapp && (
+                        <>
+                          <span>•</span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setWaTarget(n);
+                              setWaModalOpen(true);
+                            }}
+                            className="text-emerald-700 dark:text-emerald-400 font-medium hover:underline inline-flex items-center gap-1"
+                          >
+                            <MessageCircle className="h-3 w-3 text-emerald-600" />
+                            {n.whatsapp}
+                          </button>
+                        </>
+                      )}
+                    </div>
+
                     {n.bankOrEwallet && (
-                      <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                      <p className="mt-0.5 text-[11px] font-medium text-slate-500 dark:text-slate-400">
                         {n.bankOrEwallet} • {n.nomorRekening || '-'}
                       </p>
                     )}

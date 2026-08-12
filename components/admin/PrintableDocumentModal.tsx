@@ -89,17 +89,6 @@ export function PrintableDocumentModal({
             >
               Kwitansi Pencairan Dana
             </button>
-            <button
-              type="button"
-              onClick={() => setDocType('KWITANSI_LUNAS')}
-              className={`text-xs font-semibold px-3 py-1.5 rounded-lg border transition-all ${
-                docType === 'KWITANSI_LUNAS'
-                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
-                  : 'bg-slate-50 text-slate-700 hover:bg-slate-100 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 dark:border-slate-700'
-              }`}
-            >
-              Surat Keterangan Lunas
-            </button>
           </div>
         </div>
 

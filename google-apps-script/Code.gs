@@ -19,10 +19,6 @@
  * ============================================================
  */
 
-// ============================================================
-//  KONFIGURASI
-// ============================================================
-
 var API_KEY = 'mySecretKey123'; // Ganti sesuai .env NEXT_PUBLIC_API_KEY
 var SHEET_NASABAH = 'Nasabah';
 var SHEET_CONFIG = 'Config';
@@ -31,9 +27,15 @@ var SHEET_COUNTER = 'Counter';
 var SHEET_LOGS = 'Activity Logs';
 var DRIVE_FOLDER_NAME = 'LMS_Uploads';
 
-// ============================================================
-//  CORS HEADERS
-// ============================================================
+var OFFICIAL_NASABAH_HEADERS = [
+  'ID', 'Nama', 'NIK', 'TanggalLahir', 'WhatsApp', 'Lokasi',
+  'NamaKontakDarurat', 'HubunganKontakDarurat', 'NoKontakDarurat',
+  'BankOrEwallet', 'NomorRekening', 'NamaPemilikRekening',
+  'JumlahPinjaman', 'Tenor', 'Bunga', 'Status', 'AlasanReject',
+  'IsAutoRejected', 'AutoRejectReason', 'TanggalPengajuan',
+  'TanggalJatuhTempo', 'TotalDanaDisalurkan', 'KtpUrl', 'SelfieUrl',
+  'SocmedUrl', 'AdminNote', 'StatusHistory'
+];
 
 function getCorsHeaders() {
   return {
@@ -49,12 +51,33 @@ function jsonOutput(data) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
+function safeIsoDate(val) {
+  if (!val) return new Date().toISOString();
+  try {
+    var d = new Date(val);
+    if (isNaN(d.getTime())) return new Date().toISOString();
+    return d.toISOString();
+  } catch (e) {
+    return new Date().toISOString();
+  }
+}
+
+function autoFixNasabahHeaders(sheet) {
+  if (!sheet) return;
+  var lastCol = Math.max(sheet.getLastColumn(), 1);
+  var currentHeaders = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  
+  if (currentHeaders.length < 27 || String(currentHeaders[2]).trim().toLowerCase() === 'tanggallahir') {
+    sheet.getRange(1, 1, 1, OFFICIAL_NASABAH_HEADERS.length).setValues([OFFICIAL_NASABAH_HEADERS]);
+    sheet.getRange(1, 1, 1, OFFICIAL_NASABAH_HEADERS.length).setFontWeight('bold');
+  }
+}
+
 // ============================================================
 //  HANDLER UTAMA
 // ============================================================
 
 function doGet(e) {
-  var headers = getCorsHeaders();
   var action = (e.parameter.action || '').toLowerCase();
   var apiKey = e.parameter.apiKey || '';
 
@@ -64,6 +87,9 @@ function doGet(e) {
 
   try {
     switch (action) {
+      case 'ping':
+      case 'testconnection':
+        return jsonOutput({ success: true, message: 'Koneksi Google Spreadsheet Aktif' });
       case 'getnasabah':
         return jsonOutput({ success: true, data: getNasabahData() });
       case 'getconfig':
@@ -80,7 +106,7 @@ function doGet(e) {
         var password = e.parameter.password || '';
         return jsonOutput({ success: true, data: loginAdmin(email, password) });
       default:
-        return jsonOutput({ success: false, message: 'Unknown action: ' + action });
+        return jsonOutput({ success: true, message: 'Unknown action: ' + action });
     }
   } catch (err) {
     return jsonOutput({ success: false, message: 'Error: ' + err.toString() });
@@ -103,6 +129,9 @@ function doPost(e) {
 
   try {
     switch (action) {
+      case 'ping':
+      case 'testconnection':
+        return jsonOutput({ success: true, message: 'Koneksi Google Spreadsheet Aktif' });
       case 'submitpengajuan':
         return jsonOutput({ success: true, data: submitPengajuanData(body.data) });
       case 'updatestatus':
@@ -129,9 +158,7 @@ function doPost(e) {
   }
 }
 
-// OPTIONS preflight untuk CORS
 function doOptions() {
-  var headers = getCorsHeaders();
   return ContentService.createTextOutput('')
     .setMimeType(ContentService.MimeType.TEXT);
 }
@@ -143,22 +170,13 @@ function doOptions() {
 function setupSheets() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
 
-  // Sheet Nasabah
   var nasabahSheet = ss.getSheetByName(SHEET_NASABAH);
   if (!nasabahSheet) {
     nasabahSheet = ss.insertSheet(SHEET_NASABAH);
   }
-  if (nasabahSheet.getLastRow() === 0) {
-    nasabahSheet.appendRow([
-      'ID', 'Nama', 'TanggalLahir', 'WhatsApp', 'Lokasi',
-      'JumlahPinjaman', 'Tenor', 'Bunga', 'Status', 'AlasanReject',
-      'TanggalPengajuan', 'TanggalJatuhTempo', 'TotalDanaDisalurkan',
-      'KtpUrl', 'SelfieUrl', 'SocmedUrl', 'AdminNote'
-    ]);
-    nasabahSheet.getRange('A1:Q1').setFontWeight('bold');
-  }
+  nasabahSheet.getRange(1, 1, 1, OFFICIAL_NASABAH_HEADERS.length).setValues([OFFICIAL_NASABAH_HEADERS]);
+  nasabahSheet.getRange(1, 1, 1, OFFICIAL_NASABAH_HEADERS.length).setFontWeight('bold');
 
-  // Sheet Config
   var configSheet = ss.getSheetByName(SHEET_CONFIG);
   if (!configSheet) {
     configSheet = ss.insertSheet(SHEET_CONFIG);
@@ -192,7 +210,6 @@ function setupSheets() {
     configSheet.getRange('A1:B1').setFontWeight('bold');
   }
 
-  // Sheet Admin
   var adminSheet = ss.getSheetByName(SHEET_ADMIN);
   if (!adminSheet) {
     adminSheet = ss.insertSheet(SHEET_ADMIN);
@@ -204,7 +221,6 @@ function setupSheets() {
     adminSheet.getRange('A1:D1').setFontWeight('bold');
   }
 
-  // Sheet Counter
   var counterSheet = ss.getSheetByName(SHEET_COUNTER);
   if (!counterSheet) {
     counterSheet = ss.insertSheet(SHEET_COUNTER);
@@ -214,7 +230,6 @@ function setupSheets() {
     counterSheet.getRange('A1:B1').setFontWeight('bold');
   }
 
-  // Sheet Activity Logs
   var logsSheet = ss.getSheetByName(SHEET_LOGS);
   if (!logsSheet) {
     logsSheet = ss.insertSheet(SHEET_LOGS);
@@ -224,23 +239,25 @@ function setupSheets() {
     logsSheet.getRange('A1:H1').setFontWeight('bold');
   }
 
-  // Buat folder Drive untuk upload
   var folders = DriveApp.getFoldersByName(DRIVE_FOLDER_NAME);
   if (!folders.hasNext()) {
     DriveApp.createFolder(DRIVE_FOLDER_NAME);
   }
 
-  SpreadsheetApp.getActiveSpreadsheet().toast('Setup selesai! Semua sheet telah dibuat.', 'Sukses');
+  SpreadsheetApp.getActiveSpreadsheet().toast('Setup selesai! Header & sheet telah diperbarui.', 'Sukses');
 }
 
 // ============================================================
 //  GENERATE ID PENGAJUAN
-//  Format: LN-YYYYMMDD-XXXX (counter harian, reset tiap hari)
 // ============================================================
 
 function generateIdPengajuan() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var counterSheet = ss.getSheetByName(SHEET_COUNTER);
+  if (!counterSheet) {
+    counterSheet = ss.insertSheet(SHEET_COUNTER);
+    counterSheet.appendRow(['Tanggal', 'Counter']);
+  }
   var today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd');
   var lastRow = counterSheet.getLastRow();
 
@@ -249,20 +266,18 @@ function generateIdPengajuan() {
     var lastDateStr = Utilities.formatDate(new Date(lastDate), Session.getScriptTimeZone(), 'yyyyMMdd');
     if (lastDateStr === today) {
       var currentCounter = counterSheet.getRange(lastRow, 2).getValue();
-      var newCounter = currentCounter + 1;
+      var newCounter = Number(currentCounter || 0) + 1;
       counterSheet.getRange(lastRow, 2).setValue(newCounter);
       return 'LN-' + today + '-' + String(newCounter).padStart(4, '0');
     }
   }
 
-  // Tanggal baru atau counter pertama
   counterSheet.appendRow([new Date(), 1]);
   return 'LN-' + today + '-0001';
 }
 
 // ============================================================
 //  UPLOAD FILE KE DRIVE
-//  Nama file: [ID]_KTP, [ID]_SELFIE, [ID]_SOCMED
 // ============================================================
 
 function uploadFileToDrive(base64Data, fileName, mimeType) {
@@ -293,58 +308,105 @@ function uploadFileToDrive(base64Data, fileName, mimeType) {
 }
 
 // ============================================================
-//  CRUD FUNCTIONS
+//  GET DATA NASABAH
 // ============================================================
 
 function getNasabahData() {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NASABAH);
   if (!sheet) return [];
+  autoFixNasabahHeaders(sheet);
+
   var data = sheet.getDataRange().getValues();
   if (data.length <= 1) return [];
 
   var headers = data[0];
   var result = [];
+
   for (var i = 1; i < data.length; i++) {
-    var row = {};
+    var r = data[i];
+    if (!r || !r[0]) continue;
+
+    var rowByHeader = {};
     for (var j = 0; j < headers.length; j++) {
-      var headerName = headers[j];
-      var val = data[i][j];
-      row[headerName] = val;
-      
-      var camelKey = headerName.charAt(0).toLowerCase() + headerName.slice(1);
-      row[camelKey] = val;
+      var h = headers[j];
+      rowByHeader[h] = r[j];
+      var camel = h.charAt(0).toLowerCase() + h.slice(1);
+      rowByHeader[camel] = r[j];
     }
+
+    var is27Col = r.length >= 20;
+
+    var id = String((is27Col ? r[0] : rowByHeader.id || rowByHeader.ID) || '');
+    var nama = String((is27Col ? r[1] : rowByHeader.nama || rowByHeader.Nama) || '');
+    var nik = String((is27Col ? r[2] : rowByHeader.nik || rowByHeader.NIK) || '');
+    var tanggalLahir = String((is27Col ? r[3] : rowByHeader.tanggalLahir || rowByHeader.TanggalLahir) || '');
+    var whatsapp = String((is27Col ? r[4] : rowByHeader.whatsapp || rowByHeader.WhatsApp) || '');
+    var lokasi = String((is27Col ? r[5] : rowByHeader.lokasi || rowByHeader.Lokasi) || '');
+    var namaKontakDarurat = String((is27Col ? r[6] : rowByHeader.namaKontakDarurat || rowByHeader.NamaKontakDarurat) || '');
+    var hubunganKontakDarurat = String((is27Col ? r[7] : rowByHeader.hubunganKontakDarurat || rowByHeader.HubunganKontakDarurat) || '');
+    var noKontakDarurat = String((is27Col ? r[8] : rowByHeader.noKontakDarurat || rowByHeader.NoKontakDarurat) || '');
+    var bankOrEwallet = String((is27Col ? r[9] : rowByHeader.bankOrEwallet || rowByHeader.BankOrEwallet) || '');
+    var nomorRekening = String((is27Col ? r[10] : rowByHeader.nomorRekening || rowByHeader.NomorRekening) || '');
+    var namaPemilikRekening = String((is27Col ? r[11] : rowByHeader.namaPemilikRekening || rowByHeader.NamaPemilikRekening) || '');
+    var jumlahPinjaman = Number((is27Col ? r[12] : rowByHeader.jumlahPinjaman || rowByHeader.JumlahPinjaman) || 0);
+    var tenor = Number((is27Col ? r[13] : rowByHeader.tenor || rowByHeader.Tenor) || 0);
+    var bunga = Number((is27Col ? r[14] : rowByHeader.bunga || rowByHeader.Bunga) || 0);
+    var status = String((is27Col ? r[15] : rowByHeader.status || rowByHeader.Status) || 'Pending');
+    var alasanReject = String((is27Col ? r[16] : rowByHeader.alasanReject || rowByHeader.AlasanReject) || '');
+    var isAutoRejected = is27Col ? (r[17] === 'YA' || r[17] === true) : (rowByHeader.isAutoRejected === true || rowByHeader.IsAutoRejected === 'YA');
+    var autoRejectReason = String((is27Col ? r[18] : rowByHeader.autoRejectReason || rowByHeader.AutoRejectReason) || '');
     
-    var nasabah = {
-      id: String(row.id || row.ID || ''),
-      nama: String(row.nama || row.Nama || ''),
-      nik: String(row.nik || row.NIK || ''),
-      tanggalLahir: String(row.tanggalLahir || row.TanggalLahir || ''),
-      whatsapp: String(row.whatsapp || row.WhatsApp || ''),
-      lokasi: String(row.lokasi || row.Lokasi || ''),
-      jumlahPinjaman: Number(row.jumlahPinjaman || row.JumlahPinjaman || 0),
-      tenor: Number(row.tenor || row.Tenor || 0),
-      bunga: Number(row.bunga || row.Bunga || 0),
-      status: String(row.status || row.Status || 'Pending'),
-      alasanReject: String(row.alasanReject || row.AlasanReject || ''),
-      isAutoRejected: row.isAutoRejected === true || row.IsAutoRejected === 'YA' || row.IsAutoRejected === true,
-      autoRejectReason: String(row.autoRejectReason || row.AutoRejectReason || ''),
-      tanggalPengajuan: row.tanggalPengajuan || row.TanggalPengajuan ? new Date(row.tanggalPengajuan || row.TanggalPengajuan).toISOString() : new Date().toISOString(),
-      tanggalJatuhTempo: row.tanggalJatuhTempo || row.TanggalJatuhTempo ? new Date(row.tanggalJatuhTempo || row.TanggalJatuhTempo).toISOString() : '',
-      totalDanaDisalurkan: Number(row.totalDanaDisalurkan || row.TotalDanaDisalurkan || 0),
-      ktpUrl: String(row.ktpUrl || row.KtpUrl || ''),
-      selfieUrl: String(row.selfieUrl || row.SelfieUrl || ''),
-      socmedUrl: String(row.socmedUrl || row.SocmedUrl || ''),
-      namaKontakDarurat: String(row.namaKontakDarurat || row.NamaKontakDarurat || ''),
-      hubunganKontakDarurat: String(row.hubunganKontakDarurat || row.HubunganKontakDarurat || ''),
-      noKontakDarurat: String(row.noKontakDarurat || row.NoKontakDarurat || ''),
-      bankOrEwallet: String(row.bankOrEwallet || row.BankOrEwallet || ''),
-      nomorRekening: String(row.nomorRekening || row.NomorRekening || ''),
-      namaPemilikRekening: String(row.namaPemilikRekening || row.NamaPemilikRekening || ''),
-      adminNote: String(row.adminNote || row.AdminNote || ''),
-      statusHistory: row.statusHistory || row.StatusHistory || []
-    };
-    result.push(nasabah);
+    var rawTglPengajuan = is27Col ? r[19] : (rowByHeader.tanggalPengajuan || rowByHeader.TanggalPengajuan);
+    var tanggalPengajuan = safeIsoDate(rawTglPengajuan);
+
+    var rawTglJatuhTempo = is27Col ? r[20] : (rowByHeader.tanggalJatuhTempo || rowByHeader.TanggalJatuhTempo);
+    var tanggalJatuhTempo = rawTglJatuhTempo ? safeIsoDate(rawTglJatuhTempo) : '';
+
+    var totalDanaDisalurkan = Number((is27Col ? r[21] : rowByHeader.totalDanaDisalurkan || rowByHeader.TotalDanaDisalurkan) || 0);
+    var ktpUrl = String((is27Col ? r[22] : rowByHeader.ktpUrl || rowByHeader.KtpUrl) || '');
+    var selfieUrl = String((is27Col ? r[23] : rowByHeader.selfieUrl || rowByHeader.SelfieUrl) || '');
+    var socmedUrl = String((is27Col ? r[24] : rowByHeader.socmedUrl || rowByHeader.SocmedUrl) || '');
+    var adminNote = String((is27Col ? r[25] : rowByHeader.adminNote || rowByHeader.AdminNote) || '');
+    var rawHistory = is27Col ? r[26] : (rowByHeader.statusHistory || rowByHeader.StatusHistory);
+
+    var statusHistory = [];
+    if (rawHistory) {
+      if (typeof rawHistory === 'string') {
+        try { statusHistory = JSON.parse(rawHistory); } catch (_) {}
+      } else if (Array.isArray(rawHistory)) {
+        statusHistory = rawHistory;
+      }
+    }
+
+    result.push({
+      id: id,
+      nama: nama,
+      nik: nik,
+      tanggalLahir: tanggalLahir,
+      whatsapp: whatsapp,
+      lokasi: lokasi,
+      namaKontakDarurat: namaKontakDarurat,
+      hubunganKontakDarurat: hubunganKontakDarurat,
+      noKontakDarurat: noKontakDarurat,
+      bankOrEwallet: bankOrEwallet,
+      nomorRekening: nomorRekening,
+      namaPemilikRekening: namaPemilikRekening,
+      jumlahPinjaman: isNaN(jumlahPinjaman) ? 0 : jumlahPinjaman,
+      tenor: isNaN(tenor) ? 0 : tenor,
+      bunga: isNaN(bunga) ? 0 : bunga,
+      status: status,
+      alasanReject: alasanReject,
+      isAutoRejected: isAutoRejected,
+      autoRejectReason: autoRejectReason,
+      tanggalPengajuan: tanggalPengajuan,
+      tanggalJatuhTempo: tanggalJatuhTempo,
+      totalDanaDisalurkan: isNaN(totalDanaDisalurkan) ? 0 : totalDanaDisalurkan,
+      ktpUrl: ktpUrl,
+      selfieUrl: selfieUrl,
+      socmedUrl: socmedUrl,
+      adminNote: adminNote,
+      statusHistory: statusHistory
+    });
   }
   return result;
 }
@@ -352,7 +414,7 @@ function getNasabahData() {
 function getNasabahByIdData(id) {
   var allData = getNasabahData();
   for (var i = 0; i < allData.length; i++) {
-    if (allData[i].id === id || allData[i].ID === id) return allData[i];
+    if (allData[i].id === id) return allData[i];
   }
   return null;
 }
@@ -385,7 +447,7 @@ function loginAdmin(email, password) {
         email: data[i][0],
         nama: data[i][2],
         role: data[i][3],
-        password: '' // jangan kembalikan password
+        password: ''
       };
     }
   }
@@ -396,9 +458,13 @@ function submitPengajuanData(data) {
   if (!data) return { id: '' };
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(SHEET_NASABAH);
+  if (!sheet) {
+    sheet = ss.insertSheet(SHEET_NASABAH);
+  }
+  autoFixNasabahHeaders(sheet);
+
   var id = data.id || generateIdPengajuan();
 
-  // Upload file jika ada (base64)
   var ktpSrc = data.ktpUrl || data.ktpBase64 || '';
   var selfieSrc = data.selfieUrl || data.selfieBase64 || '';
   var socmedSrc = data.socmedUrl || data.socmedBase64 || '';
@@ -409,13 +475,24 @@ function submitPengajuanData(data) {
 
   var now = data.tanggalPengajuan ? new Date(data.tanggalPengajuan) : new Date();
 
+  var lokasiVal = data.lokasi || '';
+  if (!lokasiVal && (data.alamatLengkap || data.shareLokasi)) {
+    var addr = data.alamatLengkap || '';
+    var loc = data.shareLokasi || '';
+    if (addr && loc) {
+      lokasiVal = addr + ' | Share Lokasi: ' + loc;
+    } else {
+      lokasiVal = addr || loc;
+    }
+  }
+
   sheet.appendRow([
     id,
     data.nama || '',
     data.nik || '',
     data.tanggalLahir || '',
     data.whatsapp || '',
-    data.lokasi || '',
+    lokasiVal,
     data.namaKontakDarurat || '',
     data.hubunganKontakDarurat || '',
     data.noKontakDarurat || '',
@@ -444,43 +521,41 @@ function submitPengajuanData(data) {
 
 function updateStatusData(id, status, alasan) {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NASABAH);
+  if (!sheet) return null;
+  autoFixNasabahHeaders(sheet);
+
   var data = sheet.getDataRange().getValues();
 
   for (var i = 1; i < data.length; i++) {
-    if (data[i][0] === id) {
-      sheet.getRange(i + 1, 9).setValue(status); // Status
+    var r = data[i];
+    if (String(r[0]).trim() === String(id).trim()) {
+      var rowNum = i + 1;
+      
+      // Col 16 (P) = Status
+      sheet.getRange(rowNum, 16).setValue(status);
 
+      // Col 17 (Q) = AlasanReject
       if (status === 'Rejected' && alasan) {
-        sheet.getRange(i + 1, 10).setValue(alasan); // AlasanReject
-      } else {
-        sheet.getRange(i + 1, 10).clearContent();
+        sheet.getRange(rowNum, 17).setValue(alasan);
+      } else if (status !== 'Rejected') {
+        sheet.getRange(rowNum, 17).setValue('');
       }
 
       if (status === 'Approved') {
-        var tanggalPengajuan = new Date(data[i][10]);
-        var tenor = data[i][6];
-        var jatuhTempo = new Date(tanggalPengajuan.getTime() + tenor * 24 * 60 * 60 * 1000);
-        sheet.getRange(i + 1, 12).setValue(jatuhTempo); // TanggalJatuhTempo
-        sheet.getRange(i + 1, 13).setValue(data[i][5]); // TotalDanaDisalurkan
-      } else {
-        sheet.getRange(i + 1, 12).clearContent();
-        sheet.getRange(i + 1, 13).clearContent();
+        var tglPengajuanVal = r[19] ? new Date(r[19]) : new Date();
+        var tenorVal = Number(r[13]) || 14;
+        var jatuhTempoVal = new Date(tglPengajuanVal.getTime() + tenorVal * 24 * 60 * 60 * 1000);
+        
+        // Col 21 (U) = TanggalJatuhTempo
+        sheet.getRange(rowNum, 21).setValue(jatuhTempoVal);
+        // Col 22 (V) = TotalDanaDisalurkan
+        sheet.getRange(rowNum, 22).setValue(Number(r[12]) || 0);
+      } else if (status === 'Rejected' || status === 'Pending') {
+        sheet.getRange(rowNum, 21).setValue('');
+        sheet.getRange(rowNum, 22).setValue(0);
       }
 
-      // Return updated row
-      var updatedRow = sheet.getRange(i + 1, 1, 1, 17).getValues()[0];
-      var headers = data[0];
-      var result = {};
-      for (var j = 0; j < headers.length; j++) {
-        result[headers[j]] = updatedRow[j];
-      }
-      if (result.TanggalPengajuan) {
-        result.TanggalPengajuan = new Date(result.TanggalPengajuan).toISOString();
-      }
-      if (result.TanggalJatuhTempo) {
-        result.TanggalJatuhTempo = new Date(result.TanggalJatuhTempo).toISOString();
-      }
-      return result;
+      return getNasabahByIdData(id);
     }
   }
   return null;
@@ -501,7 +576,7 @@ function getAdminUsersData() {
     if (data[i][0]) {
       result.push({
         email: String(data[i][0]),
-        password: '', // disembunyikan untuk keamanan
+        password: '',
         nama: String(data[i][2] || ''),
         role: String(data[i][3] || 'Admin')
       });
@@ -519,16 +594,16 @@ function updateAdminUserData(email, updates) {
   for (var i = 1; i < data.length; i++) {
     if (String(data[i][0]).trim().toLowerCase() === cleanEmail) {
       if (updates.newEmail && String(updates.newEmail).trim() !== '') {
-        sheet.getRange(i + 1, 1).setValue(String(updates.newEmail).trim().toLowerCase()); // Email (col A)
+        sheet.getRange(i + 1, 1).setValue(String(updates.newEmail).trim().toLowerCase());
       }
       if (updates.password) {
-        sheet.getRange(i + 1, 2).setValue(updates.password); // Password (col B)
+        sheet.getRange(i + 1, 2).setValue(updates.password);
       }
       if (updates.nama !== undefined && String(updates.nama).trim() !== '') {
-        sheet.getRange(i + 1, 3).setValue(String(updates.nama).trim()); // Nama (col C)
+        sheet.getRange(i + 1, 3).setValue(String(updates.nama).trim());
       }
       if (updates.role) {
-        sheet.getRange(i + 1, 4).setValue(updates.role); // Role (col D)
+        sheet.getRange(i + 1, 4).setValue(updates.role);
       }
       return true;
     }
@@ -573,7 +648,7 @@ function getAdminLogsData() {
     if (data[i][0]) {
       result.push({
         id: String(data[i][0] || ''),
-        timestamp: data[i][1] ? new Date(data[i][1]).toISOString() : new Date().toISOString(),
+        timestamp: safeIsoDate(data[i][1]),
         adminEmail: String(data[i][2] || ''),
         adminName: String(data[i][3] || ''),
         actionType: String(data[i][4] || ''),
@@ -583,7 +658,7 @@ function getAdminLogsData() {
       });
     }
   }
-  return result.reverse(); // Urutan terbaru di atas
+  return result.reverse();
 }
 
 function addAdminLogData(log) {
@@ -619,4 +694,3 @@ function clearAdminLogsData() {
   }
   return true;
 }
-

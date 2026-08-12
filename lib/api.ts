@@ -383,13 +383,29 @@ export function normalizeNasabah(raw: any): Nasabah {
     try { history = JSON.parse(raw.statusHistory); } catch (_) {}
   }
 
+  const lokasiRaw = String(raw.lokasi || raw.Lokasi || '');
+  let alamatLengkap = String(raw.alamatLengkap || raw.AlamatLengkap || '').trim();
+  let shareLokasi = String(raw.shareLokasi || raw.ShareLokasi || '').trim();
+
+  if (!alamatLengkap && !shareLokasi) {
+    if (lokasiRaw.includes(' | Share Lokasi: ')) {
+      const parts = lokasiRaw.split(' | Share Lokasi: ');
+      alamatLengkap = parts[0].trim();
+      shareLokasi = parts[1].trim();
+    } else {
+      alamatLengkap = lokasiRaw;
+    }
+  }
+
   return {
     id: String(raw.id || raw.ID || raw.Id || ''),
     nama: String(raw.nama || raw.Nama || ''),
     nik: raw.nik || raw.NIK || raw.Nik || '',
     tanggalLahir: raw.tanggalLahir || raw.TanggalLahir || '',
     whatsapp: String(raw.whatsapp || raw.WhatsApp || raw.Whatsapp || ''),
-    lokasi: String(raw.lokasi || raw.Lokasi || ''),
+    lokasi: lokasiRaw,
+    alamatLengkap: alamatLengkap || lokasiRaw,
+    shareLokasi: shareLokasi || undefined,
     jumlahPinjaman: Number(raw.jumlahPinjaman || raw.JumlahPinjaman || 0),
     tenor: Number(raw.tenor || raw.Tenor || 0),
     bunga: Number(raw.bunga || raw.Bunga || 0),
@@ -411,6 +427,11 @@ export function normalizeNasabah(raw: any): Nasabah {
     namaPemilikRekening: raw.namaPemilikRekening || raw.NamaPemilikRekening || '',
     adminNote: raw.adminNote || raw.AdminNote || '',
     statusHistory: history,
+    sisaPinjaman: raw.sisaPinjaman !== undefined ? Number(raw.sisaPinjaman) : undefined,
+    repaymentHistory: Array.isArray(raw.repaymentHistory) ? raw.repaymentHistory : undefined,
+    modeCicilan: raw.modeCicilan || raw.ModeCicilan || 'PENUH',
+    keteranganModeCicilan: raw.keteranganModeCicilan || raw.KeteranganModeCicilan || undefined,
+    driveFolderUrl: raw.driveFolderUrl || raw.DriveFolderUrl || undefined,
   };
 }
 
@@ -418,13 +439,24 @@ async function apiGet<T>(endpoint: string): Promise<T> {
   const urlBase = getEffectiveAppsScriptUrl();
   if (!urlBase) throw new Error('NEXT_PUBLIC_APPS_SCRIPT_URL tidak dikonfigurasi');
   const url = `${urlBase}?action=${endpoint}&apiKey=${encodeURIComponent(API_KEY)}`;
-  const res = await fetch(url, { method: 'GET' });
-  if (!res.ok) throw new Error(`API error HTTP ${res.status}`);
-  const json = await res.json();
-  if (json && typeof json === 'object' && 'data' in json) {
-    return json.data as T;
+  
+  // Timeout controller to prevent hanging if Google Apps Script is slow
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 2500);
+
+  try {
+    const res = await fetch(url, { method: 'GET', signal: controller.signal });
+    clearTimeout(timeoutId);
+    if (!res.ok) throw new Error(`API error HTTP ${res.status}`);
+    const json = await res.json();
+    if (json && typeof json === 'object' && 'data' in json) {
+      return json.data as T;
+    }
+    return json as T;
+  } catch (err) {
+    clearTimeout(timeoutId);
+    throw err;
   }
-  return json as T;
 }
 
 async function apiPost<T>(endpoint: string, body: Record<string, unknown>): Promise<T> {
@@ -475,12 +507,19 @@ export const realApi = {
  */
 export async function testConnection(url: string): Promise<{ ok: boolean; message?: string }> {
   if (!url || url.trim() === '') {
-    return { ok: false, message: 'URL tidak dikonfigurasi' };
+    return { ok: false, message: 'URL Google Apps Script belum diisi' };
   }
+  const cleanUrl = url.trim();
   try {
-    const testUrl = `${url.trim()}?action=getConfig&apiKey=${encodeURIComponent(API_KEY)}`;
+    const testUrl = `${cleanUrl}?action=testconnection&apiKey=${encodeURIComponent(API_KEY)}`;
     const res = await fetch(testUrl, { method: 'GET' });
     if (!res.ok) {
+      if (res.status === 404) {
+        return {
+          ok: false,
+          message: 'HTTP 404 - URL Web App Apps Script salah/belum dideploy dengan versi terbaru'
+        };
+      }
       return { ok: false, message: `HTTP ${res.status} – ${res.statusText}` };
     }
     const json = await res.json();
@@ -494,7 +533,7 @@ export async function testConnection(url: string): Promise<{ ok: boolean; messag
   } catch (err) {
     return {
       ok: false,
-      message: err instanceof Error ? err.message : 'Koneksi gagal (CORS atau jaringan)',
+      message: err instanceof Error ? err.message : 'Koneksi gagal (CORS atau masalah jaringan)',
     };
   }
 }
@@ -566,42 +605,71 @@ export function enrichNasabahHistory(data: Nasabah[]): Nasabah[] {
 //  PUBLIC API FUNCTIONS
 // ============================================================
 
-export async function getNasabah(): Promise<Nasabah[]> {
-  let combined: Nasabah[] = [];
-  const localStore = getStoredNasabah().map(normalizeNasabah);
+// In-memory cache for ultra-fast response times
+let cachedNasabahList: Nasabah[] | null = null;
+let lastNasabahFetchTimestamp = 0;
+const NASABAH_CACHE_TTL_MS = 15000; // 15 seconds cache TTL
 
-  if (getEffectiveAppsScriptUrl()) {
-    try {
-      const remoteRaw = await realApi.getNasabah();
-      if (Array.isArray(remoteRaw)) {
-        const remoteData = remoteRaw.map(normalizeNasabah);
-        // Merge remote with local store to ensure local submissions are never lost
-        const combinedMap = new Map<string, Nasabah>();
-        remoteData.forEach((item) => {
-          if (item.id) combinedMap.set(item.id, item);
-        });
-        localStore.forEach((item) => {
-          if (item.id && !combinedMap.has(item.id)) {
-            combinedMap.set(item.id, item);
-          }
-        });
-        combined = Array.from(combinedMap.values());
-      } else {
-        combined = [...localStore];
-      }
-    } catch (err) {
-      console.warn('Fetch dari Apps Script gagal, menggunakan data lokal:', err);
-      combined = [...localStore];
-    }
-  } else {
-    combined = [...localStore];
+export function invalidateNasabahCache(): void {
+  cachedNasabahList = null;
+  lastNasabahFetchTimestamp = 0;
+}
+
+export async function getNasabah(options?: { forceRefresh?: boolean }): Promise<Nasabah[]> {
+  const now = Date.now();
+  const scriptUrl = getEffectiveAppsScriptUrl();
+
+  // If valid in-memory cache exists and no forceRefresh, return immediately (0ms)
+  if (!options?.forceRefresh && cachedNasabahList && (now - lastNasabahFetchTimestamp < NASABAH_CACHE_TTL_MS)) {
+    return cachedNasabahList;
   }
 
-  combined.sort(
+  const hasStaleCache = cachedNasabahList && cachedNasabahList.length > 0;
+
+  if (scriptUrl) {
+    const fetchPromise = (async () => {
+      try {
+        const remoteRaw = await realApi.getNasabah();
+        if (Array.isArray(remoteRaw)) {
+          const remoteData = remoteRaw.map(normalizeNasabah);
+          remoteData.sort(
+            (a, b) => new Date(b.tanggalPengajuan).getTime() - new Date(a.tanggalPengajuan).getTime(),
+          );
+          setStoredNasabah(remoteData);
+          const enriched = enrichNasabahHistory(remoteData);
+          cachedNasabahList = enriched;
+          lastNasabahFetchTimestamp = Date.now();
+          return enriched;
+        }
+      } catch (err) {
+        console.error('Fetch data nasabah dari Google Spreadsheet gagal:', err);
+      }
+      return null;
+    })();
+
+    // If we have stale cache and not forcing refresh, return stale cache immediately and refresh in background (SWR pattern)
+    if (!options?.forceRefresh && hasStaleCache) {
+      fetchPromise.then((fresh) => {
+        if (fresh && typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('lms_data_updated'));
+        }
+      });
+      return cachedNasabahList!;
+    }
+
+    const freshData = await fetchPromise;
+    if (freshData) return freshData;
+  }
+
+  const localStore = getStoredNasabah().map(normalizeNasabah);
+  localStore.sort(
     (a, b) => new Date(b.tanggalPengajuan).getTime() - new Date(a.tanggalPengajuan).getTime(),
   );
 
-  return enrichNasabahHistory(combined);
+  const enrichedLocal = enrichNasabahHistory(localStore);
+  cachedNasabahList = enrichedLocal;
+  lastNasabahFetchTimestamp = Date.now();
+  return enrichedLocal;
 }
 
 export async function getNasabahById(id: string): Promise<Nasabah | undefined> {
@@ -749,6 +817,7 @@ export async function updateStatus(
 
   store[idx] = updated;
   setStoredNasabah([...store]);
+  invalidateNasabahCache();
 
   // Log Activity
   addAdminLog({
@@ -761,6 +830,172 @@ export async function updateStatus(
   });
 
   return updated;
+}
+
+export async function updateNasabahAdminCustomDetails(
+  id: string,
+  updates: {
+    modeCicilan?: 'PENUH' | 'BUNGA_SAJA' | 'CICILAN_KHUSUS';
+    keteranganModeCicilan?: string;
+    tanggalJatuhTempo?: string;
+    sisaPinjaman?: number;
+    jumlahPinjaman?: number;
+    driveFolderUrl?: string;
+  },
+  performer?: { email: string; nama: string },
+): Promise<Nasabah | null> {
+  const store = getStoredNasabah();
+  const idx = store.findIndex((n) => n.id === id);
+  if (idx === -1) return null;
+
+  const current = store[idx];
+  const updated: Nasabah = {
+    ...current,
+    ...updates,
+  };
+
+  store[idx] = updated;
+  setStoredNasabah([...store]);
+  invalidateNasabahCache();
+
+  // Try syncing to Apps Script asynchronously
+  if (hasApiConfigured()) {
+    try {
+      await apiPost('updateNasabahCustom', { id, ...updates });
+    } catch (e) {
+      console.warn('Sync custom details to Apps Script failed:', e);
+    }
+  }
+
+  addAdminLog({
+    adminEmail: performer?.email || 'admin@lms.id',
+    adminName: performer?.nama || 'Admin LMS',
+    actionType: 'STATUS_UPDATE',
+    description: `Memperbarui detail cicilan/jatuh tempo untuk ${id} (${current.nama})`,
+    targetId: id,
+  });
+
+  return updated;
+}
+
+// ============================================================
+//  REPAYMENT TRACKER FUNCTIONS
+// ============================================================
+
+export async function submitRepayment(
+  nasabahId: string,
+  jumlahBayar: number,
+  buktiUrl: string,
+  catatanNasabah?: string,
+): Promise<RepaymentItem> {
+  const store = getStoredNasabah();
+  const idx = store.findIndex((n) => n.id === nasabahId);
+  if (idx === -1) {
+    throw new Error('ID Nasabah tidak ditemukan');
+  }
+
+  const nowIso = new Date().toISOString();
+  const newItem: RepaymentItem = {
+    id: 'RPT-' + Math.floor(100000 + Math.random() * 900000),
+    nasabahId,
+    tanggalBayar: nowIso.split('T')[0],
+    jumlahBayar,
+    buktiUrl,
+    status: 'PENDING_VERIFICATION',
+    adminNote: catatanNasabah,
+    submittedAt: nowIso,
+  };
+
+  const nasabah = store[idx];
+  const existingRepayments = nasabah.repaymentHistory || [];
+  const updatedRepayments = [newItem, ...existingRepayments];
+
+  const updatedNasabah: Nasabah = {
+    ...nasabah,
+    repaymentHistory: updatedRepayments,
+  };
+
+  store[idx] = updatedNasabah;
+  setStoredNasabah([...store]);
+  invalidateNasabahCache();
+
+  addAdminLog({
+    adminEmail: 'nasabah@online.id',
+    adminName: `Nasabah ${nasabah.nama}`,
+    actionType: 'REPAYMENT_SUBMITTED',
+    description: `Mengunggah bukti pembayaran angsuran Rp ${jumlahBayar.toLocaleString('id-ID')} (${nasabahId})`,
+    targetId: nasabahId,
+  });
+
+  return newItem;
+}
+
+export async function verifyRepayment(
+  nasabahId: string,
+  repaymentId: string,
+  verifiedStatus: 'VERIFIED' | 'REJECTED',
+  adminNote?: string,
+  denda: number = 0,
+  performer?: { email: string; nama: string },
+): Promise<Nasabah | null> {
+  const store = getStoredNasabah();
+  const idx = store.findIndex((n) => n.id === nasabahId);
+  if (idx === -1) return null;
+
+  const nasabah = store[idx];
+  const repayments = [...(nasabah.repaymentHistory || [])];
+  const rIdx = repayments.findIndex((r) => r.id === repaymentId);
+  if (rIdx === -1) return null;
+
+  const nowIso = new Date().toISOString();
+  const repayment = repayments[rIdx];
+  const adminName = performer?.nama || 'Admin LMS';
+
+  const profit = calculateNasabahProfit(nasabah);
+  const totalWajib = nasabah.jumlahPinjaman + profit + denda;
+
+  let alreadyPaid = repayments
+    .filter((r, index) => index !== rIdx && r.status === 'VERIFIED')
+    .reduce((s, r) => s + r.jumlahBayar, 0);
+
+  if (verifiedStatus === 'VERIFIED') {
+    alreadyPaid += repayment.jumlahBayar;
+  }
+
+  const sisaPokok = Math.max(0, totalWajib - alreadyPaid);
+
+  repayments[rIdx] = {
+    ...repayment,
+    status: verifiedStatus,
+    denda,
+    sisaPokokAfter: sisaPokok,
+    adminNote,
+    verifiedAt: nowIso,
+    verifiedBy: adminName,
+  };
+
+  const isNowLunas = sisaPokok === 0 && verifiedStatus === 'VERIFIED';
+
+  const updatedNasabah: Nasabah = {
+    ...nasabah,
+    status: isNowLunas ? 'Lunas' : nasabah.status,
+    sisaPinjaman: sisaPokok,
+    repaymentHistory: repayments,
+  };
+
+  store[idx] = updatedNasabah;
+  setStoredNasabah([...store]);
+  invalidateNasabahCache();
+
+  addAdminLog({
+    adminEmail: performer?.email || 'admin@lms.id',
+    adminName,
+    actionType: 'REPAYMENT_VERIFIED',
+    description: `Verifikasi pembayaran ${repaymentId} (${nasabahId}): ${verifiedStatus}${isNowLunas ? ' [LUNAS]' : ''}`,
+    targetId: nasabahId,
+  });
+
+  return updatedNasabah;
 }
 
 // ============================================================
@@ -863,6 +1098,7 @@ export async function deleteNasabah(id: string, performer?: { email: string; nam
 
   const updated = store.filter((n) => n.id !== id);
   setStoredNasabah(updated);
+  invalidateNasabahCache();
 
   addAdminLog({
     adminEmail: performer?.email || 'admin@lms.id',
@@ -918,6 +1154,7 @@ export async function restoreAutoReject(id: string, performer?: { email: string;
 
   store[idx] = restored;
   setStoredNasabah([...store]);
+  invalidateNasabahCache();
 
   addAdminLog({
     adminEmail: performer?.email || 'admin@lms.id',
@@ -992,6 +1229,7 @@ export async function submitPengajuan(
   }
 
   setStoredNasabah([newNasabah, ...store]);
+  invalidateNasabahCache();
   return { id: assignedId };
 }
 

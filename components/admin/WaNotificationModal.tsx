@@ -335,23 +335,23 @@ export function WaNotificationModal({
           </div>
 
           {/* Actions */}
-          <div className="flex gap-2 pt-2">
+          <div className="flex flex-col sm:flex-row gap-2 pt-2">
             <Button
               type="button"
               variant="outline"
               onClick={handleCopy}
-              className="flex-1 gap-1.5 text-xs font-semibold"
+              className="w-full sm:flex-1 gap-1.5 text-xs font-semibold h-10"
             >
-              {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+              {copied ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
               {copied ? 'Tersalin!' : 'Salin Teks Pesan'}
             </Button>
 
             <Button
               type="button"
               onClick={handleSendWA}
-              className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold gap-1.5 text-xs shadow-sm"
+              className="w-full sm:flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold gap-1.5 text-xs shadow-sm h-10"
             >
-              <Send className="h-3.5 w-3.5" />
+              <Send className="h-4 w-4" />
               Buka WhatsApp Web & Kirim
             </Button>
           </div>
